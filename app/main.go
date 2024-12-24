@@ -2,8 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"sync/atomic"
 
 	_ "github.com/lib/pq"
 )
@@ -17,6 +20,7 @@ const (
 )
 
 var db *sql.DB
+var nextShortID int64
 
 func insertData(db *sql.DB, short_id string, target_link string) {
 	sqlStatement := "INSERT INTO pastes (short_id, target_link) VALUES ($1, $2)"
@@ -40,7 +44,46 @@ func readData(db *sql.DB, short_id string) (string, bool) {
 	return targetLink, true
 }
 
-var rowsInserted = 0
+func writeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	targetLink := r.FormValue("target_link")
+	if targetLink == "" {
+		http.Error(w, "Missing target_link", http.StatusBadRequest)
+		return
+	}
+
+	shortID := fmt.Sprintf("%d", atomic.AddInt64(&nextShortID, 1))
+	insertData(db, shortID, targetLink)
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]string{"short_id": shortID}
+	json.NewEncoder(w).Encode(response)
+}
+
+func readHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	shortID := r.URL.Query().Get("short_id")
+	if shortID == "" {
+		http.Error(w, "Missing short_id", http.StatusBadRequest)
+		return
+	}
+
+	targetLink, found := readData(db, shortID)
+	if !found {
+		http.Error(w, "Short ID not found", http.StatusNotFound)
+		return
+	}
+
+	fmt.Fprintf(w, "Target Link: %s\n", targetLink)
+}
 
 func main() {
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
@@ -56,4 +99,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	http.HandleFunc("/write", writeHandler)
+	http.HandleFunc("/read", readHandler)
+
+	fmt.Println("Starting server on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
