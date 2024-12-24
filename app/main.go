@@ -35,10 +35,14 @@ func init() {
 	}
 }
 
-func insertData(db *sql.DB, short_id string, target_link string) {
+func insertData(db *sql.DB, short_id string, target_link string) bool {
 	sqlStatement := "INSERT INTO pastes (short_id, target_link) VALUES ($1, $2)"
 
-	semaphore <- struct{}{}
+	select {
+	case semaphore <- struct{}{}:
+	default:
+		return false
+	}
 	_, err := db.Exec(sqlStatement, short_id, target_link)
 	<-semaphore
 
@@ -47,6 +51,7 @@ func insertData(db *sql.DB, short_id string, target_link string) {
 	}
 
 	cache.Add(short_id, target_link)
+	return true
 }
 
 func readData(db *sql.DB, short_id string) (string, bool) {
@@ -57,7 +62,11 @@ func readData(db *sql.DB, short_id string) (string, bool) {
 	targetLink := ""
 	sqlStatement := "SELECT target_link FROM pastes WHERE short_id=$1"
 
-	semaphore <- struct{}{}
+	select {
+	case semaphore <- struct{}{}:
+	default:
+		return "", false
+	}
 	row := db.QueryRow(sqlStatement, short_id)
 	<-semaphore
 
@@ -87,7 +96,10 @@ func writeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shortID := fmt.Sprintf("%d", atomic.AddInt64(&nextShortID, 1))
-	insertData(db, shortID, targetLink)
+	if !insertData(db, shortID, targetLink) {
+		http.Error(w, "Too much DB load", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]string{"short_id": shortID}
