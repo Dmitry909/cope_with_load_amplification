@@ -1,10 +1,17 @@
-# cope_with_load_amplification
+# Решение задачи "справиться с амплификацией нагрузки на БД для look-aside кэша"
 
+**Идея**: ограничить количество одновременных запросов к БД с помощью семафора (в случае Go -- канала).
+Все запросы к БД занесены в критические секции семафора, что позволяет не увеличивать нагрузку на нее даже в случае уменьшения cache hit-а.
+
+[Как поднять БД](db.md)
+
+Запуск сервера:
 ```
 go run app/main.go
 ```
 
+Примеры запросов на сервер:
 ```
 curl -X POST -d "target_link=https://example.com" http://localhost:8080/write
-curl -X GET "http://localhost:8080/read?short_id=***"
+curl -X GET "http://localhost:8080/read?short_id=1"
 ```
