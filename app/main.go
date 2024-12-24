@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	lru "github.com/hashicorp/golang-lru"
 	_ "github.com/lib/pq"
 )
 
@@ -21,6 +22,15 @@ const (
 
 var db *sql.DB
 var nextShortID int64
+var cache *lru.Cache
+
+func init() {
+	var err error
+	cache, err = lru.New(1000000)
+	if err != nil {
+		log.Fatalf("Failed to create LRU cache: %v", err)
+	}
+}
 
 func insertData(db *sql.DB, short_id string, target_link string) {
 	sqlStatement := "INSERT INTO pastes (short_id, target_link) VALUES ($1, $2)"
@@ -28,9 +38,15 @@ func insertData(db *sql.DB, short_id string, target_link string) {
 	if err != nil {
 		log.Fatalf("Unable to execute insert query. %v", err)
 	}
+
+	cache.Add(short_id, target_link)
 }
 
 func readData(db *sql.DB, short_id string) (string, bool) {
+	if value, ok := cache.Get(short_id); ok {
+		return value.(string), true
+	}
+
 	targetLink := ""
 	sqlStatement := "SELECT target_link FROM pastes WHERE short_id=$1"
 	row := db.QueryRow(sqlStatement, short_id)
@@ -41,6 +57,9 @@ func readData(db *sql.DB, short_id string) (string, bool) {
 		}
 		log.Fatalf("Unable to execute select query. %v", err)
 	}
+
+	cache.Add(short_id, targetLink)
+
 	return targetLink, true
 }
 
