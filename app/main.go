@@ -24,6 +24,9 @@ var db *sql.DB
 var nextShortID int64
 var cache *lru.Cache
 
+var maxConcurrentDBQueries = 5000
+var semaphore = make(chan struct{}, maxConcurrentDBQueries)
+
 func init() {
 	var err error
 	cache, err = lru.New(1000000)
@@ -34,7 +37,11 @@ func init() {
 
 func insertData(db *sql.DB, short_id string, target_link string) {
 	sqlStatement := "INSERT INTO pastes (short_id, target_link) VALUES ($1, $2)"
+
+	semaphore <- struct{}{}
 	_, err := db.Exec(sqlStatement, short_id, target_link)
+	<-semaphore
+
 	if err != nil {
 		log.Fatalf("Unable to execute insert query. %v", err)
 	}
@@ -49,7 +56,11 @@ func readData(db *sql.DB, short_id string) (string, bool) {
 
 	targetLink := ""
 	sqlStatement := "SELECT target_link FROM pastes WHERE short_id=$1"
+
+	semaphore <- struct{}{}
 	row := db.QueryRow(sqlStatement, short_id)
+	<-semaphore
+
 	err := row.Scan(&targetLink)
 	if err != nil {
 		if err == sql.ErrNoRows {
