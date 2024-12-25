@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -33,9 +34,28 @@ func init() {
 	if err != nil {
 		log.Fatalf("Failed to create LRU cache: %v", err)
 	}
+
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+
+	db, err = sql.Open("postgres", psqlInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sqlStatement := "SELECT max(short_id) FROM pastes"
+	row := db.QueryRow(sqlStatement)
+	if err := row.Scan(&nextShortID); err != nil {
+		log.Fatalf("Unable to take last short_id from table. %v", err)
+	}
+	fmt.Println("found last short_id:", nextShortID)
 }
 
-func insertData(db *sql.DB, short_id string, target_link string) bool {
+func insertData(db *sql.DB, short_id int64, target_link string) bool {
 	sqlStatement := "INSERT INTO pastes (short_id, target_link) VALUES ($1, $2)"
 
 	select {
@@ -54,7 +74,7 @@ func insertData(db *sql.DB, short_id string, target_link string) bool {
 	return true
 }
 
-func readData(db *sql.DB, short_id string) (string, bool) {
+func readData(db *sql.DB, short_id int64) (string, bool) {
 	if value, ok := cache.Get(short_id); ok {
 		return value.(string), true
 	}
@@ -95,14 +115,14 @@ func writeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID := fmt.Sprintf("%d", atomic.AddInt64(&nextShortID, 1))
-	if !insertData(db, shortID, targetLink) {
+	short_id := atomic.AddInt64(&nextShortID, 1)
+	if !insertData(db, short_id, targetLink) {
 		http.Error(w, "Too much DB load", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	response := map[string]string{"short_id": shortID}
+	response := map[string]int64{"short_id": short_id}
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -112,13 +132,13 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID := r.URL.Query().Get("short_id")
-	if shortID == "" {
+	short_id, err := strconv.Atoi(r.URL.Query().Get("short_id"))
+	if err != nil {
 		http.Error(w, "Missing short_id", http.StatusBadRequest)
 		return
 	}
 
-	targetLink, found := readData(db, shortID)
+	targetLink, found := readData(db, int64(short_id))
 	if !found {
 		http.Error(w, "Short ID not found", http.StatusNotFound)
 		return
@@ -128,19 +148,7 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
-
-	var err error
-	db, err = sql.Open("postgres", psqlInfo)
-	if err != nil {
-		log.Fatal(err)
-	}
 	defer db.Close()
-
-	err = db.Ping()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	http.HandleFunc("/write", writeHandler)
 	http.HandleFunc("/read", readHandler)

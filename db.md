@@ -9,7 +9,7 @@ ALTER DATABASE db1 OWNER TO dmitry;
 psql -U dmitry -d db1
 
 CREATE TABLE pastes (
-    short_id VARCHAR(255) NOT NULL PRIMARY KEY,
+    short_id BIGINT NOT NULL PRIMARY KEY,
     target_link TEXT NOT NULL
 );
 ```
